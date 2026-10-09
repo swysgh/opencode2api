@@ -159,15 +159,17 @@ func executeNonStream(ctx context.Context, cfg *config, log *logger, pool *proxy
 }
 
 // executeStreamUpstream 只负责「拿到上游响应体」（§8）：
-// 返回（上游 body, 上游响应头, 错误）。整体 ctx 由 server.go 用 request_timeout 创建，
+// 返回（上游 body, 工具改名映射, 错误）。整体 ctx 由 server.go 用 request_timeout 创建，
 // 流式中继结束后才 cancel；上游非 2xx 时返回 *apiError（此时 body 已关）。
+// 第二个返回值是 buildUpstreamRequest 得到的「小写名 → 客户端原拼写」映射（可能为 nil），
+// 供 relaySSE 还原工具名用；上游响应头不返回（本服务不复制上游头，§9.4）。
 func executeStreamUpstream(ctx context.Context, cfg *config, log *logger, pool *proxyPool, clientReq *http.Request, body []byte, clientModel, upstreamModel string) (io.ReadCloser, map[string]string, *apiError) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	buildReq := clientReq.Clone(ctx)
 	buildReq.Body = io.NopCloser(bytes.NewReader(body))
-	httpReq, _, upBody, err := buildUpstreamRequest(cfg, buildReq, clientModel, upstreamModel, cfg.forceStream())
+	httpReq, renamed, upBody, err := buildUpstreamRequest(cfg, buildReq, clientModel, upstreamModel, cfg.forceStream())
 	if err != nil {
 		return nil, nil, &apiError{Status: http.StatusInternalServerError, Code: "internal_error", Message: err.Error(), Type: "internal_error"}
 	}
@@ -184,14 +186,7 @@ func executeStreamUpstream(ctx context.Context, cfg *config, log *logger, pool *
 		return nil, nil, ae
 	}
 
-	// 上游响应头转成 map（server.go 不复制上游头，这里仅供调用方参考，§9.4）。
-	headers := make(map[string]string, len(resp.Header))
-	for k, vv := range resp.Header {
-		if len(vv) > 0 {
-			headers[k] = vv[0]
-		}
-	}
-	return resp.Body, headers, nil
+	return resp.Body, renamed, nil
 }
 
 // relaySSE 按行读 in，只取 data: 行（注释 / 心跳 / event / 空行全部丢弃），
