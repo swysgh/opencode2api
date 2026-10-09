@@ -1,0 +1,39 @@
+server:
+  listen: "127.0.0.1:8318"
+  api_keys: []
+  max_body_bytes: 67108864
+  shutdown_timeout: 10s
+  log_level: info
+  log_file: ""
+
+upstream:
+  base_url: "https://opencode.ai/zen/v1"
+  model_prefix: "oc/"
+  models: []
+  match_regex: '(-free$)|(^big-pickle$)|(^space-bunny)'
+  model_aliases: {}
+  catalog_file: "./data/catalog.json"
+  catalog_refresh: 6h
+  catalog_timeout: 10s
+  catalog_via_proxy: false
+  inject_tools: true
+  force_stream: true
+  nonstream_policy: force
+  restore_tool_names: true
+  user_agent: "opencode/1.18.31"
+  client_name: "desktop"
+  session_ttl: 30m
+  request_timeout: 300s
+  first_byte_timeout: 60s
+
+proxy:
+  proxies: []
+  proxy_file: ""
+  strategy: round_robin
+  max_attempts: 3
+  cooldown:
+    base: 30s
+    factor: 2.0
+    max: 10m
+    jitter: 0.2
+    statuses: [403, 407, 429, 500, 502, 503, 504]

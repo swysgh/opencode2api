@@ -1,0 +1,5 @@
+/zen2api
+/bin/
+/data/
+config.yaml
+*.log
