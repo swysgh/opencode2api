@@ -117,6 +117,7 @@ func (d *durationValue) value(def time.Duration) time.Duration {
 
 func floatPtr(v float64) *float64 { return &v }
 func boolPtr(v bool) *bool        { return &v }
+func stringPtr(v string) *string  { return &v }
 
 // config 是服务全部配置项，分 server / upstream / proxy 三组（§3.2）。
 // 注意：「默认非零」的开关/时长一律用指针形态，以区分「没写」与「显式写了 false/0」。
@@ -143,7 +144,7 @@ type serverConfig struct {
 
 // upstreamConfig 是上游相关分组（§3.2）。
 type upstreamConfig struct {
-	BaseURL          string              `yaml:"base_url"`           // 默认 "https://opencode.ai/zen/v1"
+	BaseURL          *string             `yaml:"base_url"`           // 默认 "https://opencode.ai/zen/v1"；显式空/非法 → 报错
 	ModelPrefix      string              `yaml:"model_prefix"`       // 默认 "oc/"
 	Models           []string            `yaml:"models"`             // 默认 []
 	MatchRegex       string              `yaml:"match_regex"`        // 默认 `(-free$)|(^big-pickle$)|(^space-bunny)`
@@ -186,7 +187,7 @@ func defaultConfig() config {
 			LogFile:         "",
 		},
 		Upstream: upstreamConfig{
-			BaseURL:          defaultBaseURL,
+			BaseURL:          stringPtr(defaultBaseURL),
 			ModelPrefix:      defaultModelPrefix,
 			Models:           nil,
 			MatchRegex:       defaultMatchRegex,
@@ -251,6 +252,9 @@ func (c *config) restoreToolNames() bool {
 func (c *config) catalogViaProxy() bool {
 	return c.Upstream.CatalogViaProxy != nil && *c.Upstream.CatalogViaProxy
 }
+
+// baseURL 返回归一化后的生效上游基址（normalize 保证非 nil）。
+func (c *config) baseURL() string { return *c.Upstream.BaseURL }
 
 // proxyMaxAttempts 返回单请求最多尝试几个代理（<1 视为 1，§3.3）。
 func (c *config) proxyMaxAttempts() int {
@@ -323,13 +327,15 @@ func (c *config) normalize() error {
 
 	// ---- upstream ----
 	u := &c.Upstream
-	u.BaseURL = strings.TrimSpace(u.BaseURL)
-	if u.BaseURL == "" {
-		u.BaseURL = defaultBaseURL
+	// base_url 用指针区分「没写」（→ 默认）与「显式写了空/非法」（→ 报错，fail fast）。
+	if u.BaseURL == nil {
+		u.BaseURL = stringPtr(defaultBaseURL)
 	}
-	if !strings.HasPrefix(u.BaseURL, "http://") && !strings.HasPrefix(u.BaseURL, "https://") {
-		return fmt.Errorf("配置错误: upstream.base_url: 必须以 http:// 或 https:// 开头，收到 %q", u.BaseURL)
+	bu := strings.TrimSpace(*u.BaseURL)
+	if !strings.HasPrefix(bu, "http://") && !strings.HasPrefix(bu, "https://") {
+		return fmt.Errorf("配置错误: upstream.base_url: 必须以 http:// 或 https:// 开头，收到 %q", bu)
 	}
+	*u.BaseURL = bu
 
 	u.ModelPrefix = strings.TrimSpace(u.ModelPrefix)
 	if u.ModelPrefix == "" {
@@ -603,7 +609,7 @@ func (c *config) summary() string {
 	fmt.Fprintf(&b, "log_file=%q\n", c.Server.LogFile)
 
 	b.WriteString("[upstream]\n")
-	fmt.Fprintf(&b, "base_url=%q\n", c.Upstream.BaseURL)
+	fmt.Fprintf(&b, "base_url=%q\n", *c.Upstream.BaseURL)
 	fmt.Fprintf(&b, "model_prefix=%q\n", c.Upstream.ModelPrefix)
 	fmt.Fprintf(&b, "models=%d[%s]\n", len(models), strings.Join(models, ","))
 	fmt.Fprintf(&b, "match_regex=%q\n", c.Upstream.MatchRegex)

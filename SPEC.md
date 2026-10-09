@@ -101,7 +101,7 @@ type serverConfig struct {
 }
 
 type upstreamConfig struct {
-	BaseURL          string              `yaml:"base_url"`           // 默认 "https://opencode.ai/zen/v1"
+	BaseURL          *string             `yaml:"base_url"`           // 默认 "https://opencode.ai/zen/v1"（指针：显式空/非法 → 报错）
 	ModelPrefix      string              `yaml:"model_prefix"`       // 默认 "oc/"
 	Models           []string            `yaml:"models"`             // 默认 []
 	MatchRegex       string              `yaml:"match_regex"`        // 默认 `(-free$)|(^big-pickle$)|(^space-bunny)`
@@ -151,7 +151,7 @@ type proxyCooldownConfig struct {
 | `server.max_body_bytes` | > 0，否则报错 |
 | `server.shutdown_timeout` | > 0 |
 | `server.log_level` | ∈ `levelRank`，否则报错 |
-| `upstream.base_url` | 必须 `http://` / `https://` 开头 |
+| `upstream.base_url` | 必须 `http://` / `https://` 开头。字段是 `*string`：**没写 → 用默认**；**显式写了空串或非 http(s) → 报错**（fail fast）。消费方一律用 `cfg.baseURL()`（已归一化）。 |
 | `upstream.user_agent` | 必须含 `opencode/`（大小写不敏感），否则报错（上游 Cloudflare 拦别的 UA） |
 | `upstream.client_name` | 空 → 默认 `desktop` |
 | `upstream.match_regex` | 必须能编译，否则报错 |
@@ -247,6 +247,8 @@ func buildUpstreamRequest(cfg *config, req *http.Request, clientModel, upstreamM
 7. 请求由代理池发出：`pool.do(ctx, httpReq, body, log)`（现有实现，含多代理重试与冷却）。
 
 ### 6.5 upstream.go 对外接口（server.go 只依赖这几个符号，签名不许改）
+
+> 上游基址一律用 `cfg.baseURL()`（`*string` 已归一化，别直接解引用 `cfg.Upstream.BaseURL` 的裸指针）。
 
 ```go
 // apiError 是已归类好的错误，server.go 直接拿它写 OpenAI 错误信封（§9.3）。

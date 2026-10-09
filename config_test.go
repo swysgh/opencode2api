@@ -34,8 +34,8 @@ func TestDecodeConfigDefaults(t *testing.T) {
 
 	// ---- upstream ----
 	u := cfg.Upstream
-	if u.BaseURL != defaultBaseURL {
-		t.Fatalf("默认 upstream.base_url = %q", u.BaseURL)
+	if *u.BaseURL != defaultBaseURL {
+		t.Fatalf("默认 upstream.base_url = %q", *u.BaseURL)
 	}
 	if u.ModelPrefix != defaultModelPrefix {
 		t.Fatalf("默认 upstream.model_prefix = %q", u.ModelPrefix)
@@ -135,7 +135,7 @@ func TestDecodeConfigMinimalYAMLKeepsDefaults(t *testing.T) {
 	if cfg.Server.Listen != "127.0.0.1:18318" {
 		t.Fatalf("server.listen = %q", cfg.Server.Listen)
 	}
-	if cfg.Upstream.BaseURL != defaultBaseURL {
+	if *cfg.Upstream.BaseURL != defaultBaseURL {
 		t.Fatal("未覆盖的字段应保持默认")
 	}
 	if !cfg.injectTools() {
