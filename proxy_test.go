@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,8 +8,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
 )
 
 // newTestPool 用给定配置构造代理池（不触发网络）。
@@ -27,13 +24,14 @@ func newTestPool(t *testing.T, cfgYAML string) *proxyPool {
 	return pool
 }
 
-// configureExpectError 验证非法代理配置在 reconfigure（即构建代理池）时报错（§13.1）。
-func configureExpectError(t *testing.T, cfgYAML, want string) {
+// buildPoolExpectError 验证非法代理配置在构建代理池时报错（§12.1）。
+func buildPoolExpectError(t *testing.T, cfgYAML, want string) {
 	t.Helper()
-	p := newPlugin(&fakeHost{})
-	raw, _ := json.Marshal(map[string]any{"config_yaml": []byte(cfgYAML)})
-	_, err := p.HandleMethod(pluginabi.MethodPluginReconfigure, raw)
-	if err == nil {
+	cfg, err := decodeConfig([]byte(cfgYAML))
+	if err != nil {
+		t.Fatalf("解析配置失败: %v", err)
+	}
+	if _, err = buildProxyPool(&cfg, &logger{level: "debug"}); err == nil {
 		t.Fatalf("期望报错（%s）", want)
 	}
 	if !strings.Contains(err.Error(), want) {
@@ -43,7 +41,7 @@ func configureExpectError(t *testing.T, cfgYAML, want string) {
 
 // TestProxyPoolRoundRobin 验证轮转顺序（§13.1）。
 func TestProxyPoolRoundRobin(t *testing.T) {
-	pool := newTestPool(t, "proxies:\n  - http://10.0.0.1:8080\n  - http://10.0.0.2:8080\n  - http://10.0.0.3:8080\n")
+	pool := newTestPool(t, "proxy:\n  proxies:\n    - http://10.0.0.1:8080\n    - http://10.0.0.2:8080\n    - http://10.0.0.3:8080\n")
 	if len(pool.entries) != 3 {
 		t.Fatalf("池大小 = %d", len(pool.entries))
 	}
@@ -61,7 +59,7 @@ func TestProxyPoolRoundRobin(t *testing.T) {
 
 // TestProxyPoolCooledSkipped 验证冷却中的代理被跳过（§13.1）。
 func TestProxyPoolCooledSkipped(t *testing.T) {
-	pool := newTestPool(t, "proxies:\n  - http://10.0.0.1:8080\n  - http://10.0.0.2:8080\n")
+	pool := newTestPool(t, "proxy:\n  proxies:\n    - http://10.0.0.1:8080\n    - http://10.0.0.2:8080\n")
 	now := time.Now()
 	// 让第一个代理进入冷却。
 	pool.entries[0].markCooled(now, 30*time.Second, 2.0, 10*time.Minute, 0, 1)
@@ -73,7 +71,7 @@ func TestProxyPoolCooledSkipped(t *testing.T) {
 
 // TestProxyPoolAllCooledFallback 验证全部冷却时回退到剩余冷却最短者（§13.1）。
 func TestProxyPoolAllCooledFallback(t *testing.T) {
-	pool := newTestPool(t, "proxies:\n  - http://10.0.0.1:8080\n  - http://10.0.0.2:8080\n")
+	pool := newTestPool(t, "proxy:\n  proxies:\n    - http://10.0.0.1:8080\n    - http://10.0.0.2:8080\n")
 	now := time.Now()
 	pool.entries[0].markCooled(now, 30*time.Second, 2.0, 10*time.Minute, 0, 1)
 	pool.entries[1].markCooled(now, 5*time.Minute, 2.0, 10*time.Minute, 0, 3)
@@ -86,14 +84,14 @@ func TestProxyPoolAllCooledFallback(t *testing.T) {
 
 // TestProxyPoolInvalidEntry 验证非法代理条目 → 配置报错（含中文原因与条目位置，§13.1）。
 func TestProxyPoolInvalidEntry(t *testing.T) {
-	configureExpectError(t, "proxies:\n  - http://10.0.0.1:8080\n  - ftp://10.0.0.2:8080\n", "proxies[1]")
+	buildPoolExpectError(t, "proxy:\n  proxies:\n    - http://10.0.0.1:8080\n    - ftp://10.0.0.2:8080\n", "proxies[1]")
 	// 错误信息需含中文原因。
-	configureExpectError(t, "proxies:\n  - ftp://x\n", "不支持的代理地址")
+	buildPoolExpectError(t, "proxy:\n  proxies:\n    - ftp://x\n", "不支持的代理地址")
 }
 
 // TestProxyPoolMissingFile 验证声明了 proxy_file 但文件读不了 → 报错（§13.1）。
 func TestProxyPoolMissingFile(t *testing.T) {
-	configureExpectError(t, "proxy_file: /nonexistent/path/proxies.txt\n", "proxy_file")
+	buildPoolExpectError(t, "proxy:\n  proxy_file: /nonexistent/path/proxies.txt\n", "proxy_file")
 }
 
 // TestProxyFileParsing 验证 proxy_file 支持注释与空行（§13.1）。
@@ -104,7 +102,7 @@ func TestProxyFileParsing(t *testing.T) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	pool := newTestPool(t, "proxy_file: "+path+"\n")
+	pool := newTestPool(t, "proxy:\n  proxy_file: "+path+"\n")
 	if len(pool.entries) != 2 {
 		t.Fatalf("解析后应为 2 条，实际 %d: %v", len(pool.entries), pool.displays())
 	}
@@ -112,7 +110,7 @@ func TestProxyFileParsing(t *testing.T) {
 
 // TestProxyPoolMixedSchemes 验证 direct 与 http/socks5 混合（§13.1）。
 func TestProxyPoolMixedSchemes(t *testing.T) {
-	pool := newTestPool(t, "proxies:\n  - direct\n  - http://10.0.0.1:8080\n  - socks5://user:pass@10.0.0.2:1080\n")
+	pool := newTestPool(t, "proxy:\n  proxies:\n    - direct\n    - http://10.0.0.1:8080\n    - socks5://user:pass@10.0.0.2:1080\n")
 	if len(pool.entries) != 3 {
 		t.Fatalf("混合池大小 = %d", len(pool.entries))
 	}
@@ -144,7 +142,7 @@ func TestProxyPoolRetriesSingleEntry(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	cfg, err := decodeConfig([]byte("proxies: [direct]\nproxy_max_attempts: 3\nproxy_cooldown:\n  statuses: [500]\n  base: 1s\n"))
+	cfg, err := decodeConfig([]byte("proxy:\n  proxies: [direct]\n  max_attempts: 3\n  cooldown:\n    statuses: [500]\n    base: 1s\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +179,7 @@ func TestProxyFailover(t *testing.T) {
 	// 第一个代理指向必连不上的地址，第二个是直连（相对 URL 用 httptest 的 host 需要绝对，
 	// 这里用 direct 但把 upstream 作为 base_url 重写请求）。
 	// 为简单且可控：构造 pool 让第一个是坏代理、第二个是进程内直连到上游。
-	cfg, err := decodeConfig([]byte("proxies:\n  - http://127.0.0.1:1\n  - direct\nproxy_max_attempts: 2\n"))
+	cfg, err := decodeConfig([]byte("proxy:\n  proxies:\n    - http://127.0.0.1:1\n    - direct\n  max_attempts: 2\n"))
 	if err != nil {
 		t.Fatal(err)
 	}

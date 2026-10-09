@@ -85,10 +85,12 @@ func (r *router) aliasNames() []string {
 	return out
 }
 
-// matchRoute 判断请求模型名是否由本插件接管（§4）：
+// matchRoute 判断请求模型名是否由本服务接管（§5.2）：
 //   - 以 prefix 开头 → 剥前缀，命中暴露集合则接管；
 //   - 命中别名表 → 接管；
-//   - 裸上游 id / 陌生名 → 不接管（放行）。
+//   - 裸上游 id（不带前缀且不在别名表）→ 再看一眼暴露集合，命中则接管
+//     （独立服务没有名字冲突问题，比插件版宽松：请求 big-pickle 等价于 oc/big-pickle）；
+//   - 陌生名 → 不接管。
 func (r *router) matchRoute(requestedModel string) bool {
 	if requestedModel == "" {
 		return false
@@ -109,15 +111,18 @@ func (r *router) matchRoute(requestedModel string) bool {
 	if _, ok := a2u[requestedModel]; ok {
 		return true
 	}
+	// 额外接受裸上游 id（§5.2）。
+	if _, ok := exposed[requestedModel]; ok {
+		return true
+	}
 	return false
 }
 
-// resolveUpstreamModel 把请求模型名解析为上游 id（供执行器改写 body，§5.1）：
+// resolveUpstreamModel 把请求模型名解析为上游 id（供执行器改写 body，§5.2）：
 //   - 剥 prefix 后命中暴露集合 → 用该 id；
 //   - 命中别名表 → 用对应上游 id；
+//   - 裸上游 id 命中暴露集合 → 直接用该 id（§5.2，独立服务无名字冲突）；
 //   - 都不中 → 返回 ""（model_not_found）。
-//
-// 绝不把裸上游 id 直接当成"自己能处理"（§4 要求只接管带前缀或别名）。
 func (r *router) resolveUpstreamModel(requestedModel string) string {
 	if requestedModel == "" {
 		return ""
@@ -137,6 +142,10 @@ func (r *router) resolveUpstreamModel(requestedModel string) string {
 	}
 	if up, ok := a2u[requestedModel]; ok {
 		return up
+	}
+	// 额外接受裸上游 id（§5.2）。
+	if _, ok := exposed[requestedModel]; ok {
+		return requestedModel
 	}
 	return ""
 }

@@ -12,6 +12,11 @@ import (
 	"time"
 )
 
+// httpDoer 是目录拉取的出口抽象（§5.3）：*http.Client 与 *proxyPool 都满足。
+type httpDoer interface {
+	Do(*http.Request) (*http.Response, error)
+}
+
 // catalogFileShape 是 GET <base_url>/models 返回的形状（公开接口，无需鉴权）。
 type catalogFileShape struct {
 	Object string `json:"object"`
@@ -63,9 +68,12 @@ func loadCatalog(path string) *catalog {
 	return c
 }
 
-// fetch 同步重拉目录。超时由 ctx 控制（catalog_timeout）。拉取失败返回 error，
-// 调用方应使用缓存兜底（不要让注册失败，见 §3.5）。
-func (c *catalog) fetch(ctx context.Context, baseURL string, timeout time.Duration) error {
+// fetch 同步重拉目录。超时由 ctx + timeout 控制（catalog_timeout）。拉取失败返回 error，
+// 调用方应使用缓存兜底（不要让启动失败，见 §5.3）。
+// doer 为 nil → 默认直连 &http.Client{Timeout: timeout}（catalog_via_proxy=false 时，
+// 避免代理配置错误连目录都拉不到）；非 nil → 用注入的出口（如代理池的 Do）。
+// UA 用 zen2api-catalog/<version>（§5.3）。
+func (c *catalog) fetch(ctx context.Context, baseURL string, timeout time.Duration, doer httpDoer) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -73,10 +81,12 @@ func (c *catalog) fetch(ctx context.Context, baseURL string, timeout time.Durati
 	if err != nil {
 		return fmt.Errorf("构造目录请求失败: %w", err)
 	}
-	req.Header.Set("User-Agent", "cpa-zen-catalog/1.0")
-	// 直连（catalog 拉取不走代理池，避免代理配置错误时连不上目录）。
-	client := &http.Client{Timeout: timeout}
-	resp, err := client.Do(req)
+	req.Header.Set("User-Agent", "zen2api-catalog/"+version)
+	if doer == nil {
+		// 默认直连（catalog 拉取不走代理池，避免代理配置错误时连不上目录）。
+		doer = &http.Client{Timeout: timeout}
+	}
+	resp, err := doer.Do(req)
 	if err != nil {
 		return fmt.Errorf("拉取目录失败: %w", err)
 	}

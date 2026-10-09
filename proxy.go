@@ -211,13 +211,13 @@ func newDirectTransport() *http.Transport {
 // 失败 fast：非法条目 / proxy_file 声明了但读不了 → 返回中文 error。
 func buildProxyPool(cfg *config, logger_ *logger) (*proxyPool, error) {
 	var items []string
-	for i, p := range cfg.Proxies {
+	for i, p := range cfg.Proxy.Proxies {
 		items = append(items, p)
 		_ = i
 	}
 
-	if cfg.ProxyFile != "" {
-		lines, err := readProxyFile(cfg.ProxyFile)
+	if cfg.Proxy.ProxyFile != "" {
+		lines, err := readProxyFile(cfg.Proxy.ProxyFile)
 		if err != nil {
 			return nil, fmt.Errorf("配置错误: proxy_file: %v", err)
 		}
@@ -244,10 +244,10 @@ func buildProxyPool(cfg *config, logger_ *logger) (*proxyPool, error) {
 		entries = append(entries, e)
 	}
 
-	pool := &proxyPool{cfg: cfg, entries: entries, strategy: cfg.ProxyStrategy, builtAt: time.Now()}
+	pool := &proxyPool{cfg: cfg, entries: entries, strategy: cfg.Proxy.Strategy, builtAt: time.Now()}
 
 	// 每个代理 transport 的 ResponseHeaderTimeout = first_byte_timeout（§5.6 / §6.4）。
-	fbt := cfg.FirstByteTimeout.value(60 * time.Second)
+	fbt := cfg.Upstream.FirstByteTimeout.value(60 * time.Second)
 	for _, e := range entries {
 		if tr, ok := e.client.Transport.(*http.Transport); ok {
 			tr.ResponseHeaderTimeout = fbt
@@ -412,7 +412,7 @@ func (p *proxyPool) do(ctx context.Context, base *http.Request, body []byte, log
 		lastResp = r
 		lastUsed = candidate
 		shouldCool := false
-		for _, s := range p.cfg.ProxyCooldown.Statuses {
+		for _, s := range p.cfg.Proxy.Cooldown.Statuses {
 			if status == s {
 				shouldCool = true
 				break
@@ -427,6 +427,44 @@ func (p *proxyPool) do(ctx context.Context, base *http.Request, body []byte, log
 	// 所有尝试都命中冷却状态（上游真的返回了错误码）：返回最后一个响应与错误体，
 	// 让调用方以真实状态码上报；ok=false 仅在纯传输层全失败时。
 	return lastResp, lastUsed, lastResp != nil, lastBody, attempts
+}
+
+// Do 选一条代理发一次请求（§10）：失败（传输层错误或状态码命中冷却表）→
+// 冷却该代理并返回错误；成功（2xx/3xx）→ 清冷却并返回响应。不做多代理重试。
+// 它满足 §5.3 的 httpDoer 接口（目录拉取的出口注入）。
+// 非 2xx/3xx 且未命中冷却表的状态码同样按失败返回错误，但不冷却。
+func (p *proxyPool) Do(req *http.Request) (*http.Response, error) {
+	e := p.pick(time.Now())
+	if e == nil {
+		return nil, fmt.Errorf("代理池为空，无法发出请求")
+	}
+	e.addInflight(1)
+	start := time.Now()
+	resp, err := e.client.Do(req)
+	e.addInflight(-1)
+	if err != nil {
+		// 传输层错误 → 失败并冷却。
+		atomic.AddInt64(&e.fail, 1)
+		p.coolProxy(e, start, 0, nil)
+		return nil, err
+	}
+	if resp.StatusCode >= 400 {
+		// 读完并关掉错误体，避免连接泄漏；命中冷却表才冷却。
+		_, _ = readAll(resp.Body)
+		_ = resp.Body.Close()
+		atomic.AddInt64(&e.fail, 1)
+		for _, s := range p.cfg.Proxy.Cooldown.Statuses {
+			if resp.StatusCode == s {
+				p.coolProxy(e, start, resp.StatusCode, nil)
+				break
+			}
+		}
+		return nil, fmt.Errorf("代理 %s 返回状态 %d", e.display, resp.StatusCode)
+	}
+	// 成功（2xx/3xx）→ 清冷却。
+	e.markOK()
+	atomic.AddInt64(&e.ok, 1)
+	return resp, nil
 }
 
 type attemptResult struct {
@@ -464,7 +502,7 @@ func (p *proxyPool) pickDifferent(now time.Time, used map[*proxyEntry]bool) *pro
 
 // coolProxy 让一个代理进入/加深冷却（§6.3）。status 仅用于日志（0 = 传输层错误）。
 func (p *proxyPool) coolProxy(e *proxyEntry, now time.Time, status int, logger_ *logger) {
-	cd := p.cfg.ProxyCooldown
+	cd := p.cfg.Proxy.Cooldown
 	level := e.coolLevel + 1
 	d := e.markCooled(now, cd.Base.V, *cd.Factor, cd.Max.V, *cd.Jitter, level)
 	if logger_ != nil {

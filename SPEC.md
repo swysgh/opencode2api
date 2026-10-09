@@ -53,7 +53,8 @@ OpenAI 兼容 HTTP 服务。
 | `main.go` | flag 解析（**只在 `main()` 里**）、加载配置、建 logger / catalog / proxyPool / router、打印生效配置、起 HTTP 服务、优雅关闭。 |
 | `config.go` | **重写**：分组配置结构 + 默认值 + 校验 + `summary()`（脱敏）。保留 `durationValue`、`levelRank`、`floatPtr`、`boolPtr`。 |
 | `log.go` | `logger` 类型（level 过滤、可选写文件、并发安全）。 |
-| `upstream.go` | `buildUpstreamRequest`、`cloneWithBody`、非流式执行、流式执行（纯 `net/http`）。 |
+| `version.go` | `const version = "0.1.0"`（唯一内容）。 |
+| `upstream.go` | `buildUpstreamRequest`、`cloneWithBody`、`executeNonStream`、`executeStreamUpstream`、`relaySSE`、`apiError`（见 §6.5）。 |
 | `aggregate.go` | `rewriteModel`、`parseUpstreamError`、`truncate`、`proxyFailureSummary`、`aggregateSSE`、`rewritePayloadModel`。 |
 | `server.go` | HTTP 层：路由、鉴权中间件、错误信封、`/healthz`、`/v1/models`、`/v1/chat/completions`、SSE 中继。 |
 | `config_test.go` | 重写（新配置结构）。 |
@@ -245,6 +246,38 @@ func buildUpstreamRequest(cfg *config, req *http.Request, clientModel, upstreamM
    `ResponseHeaderTimeout = first_byte_timeout` 约束（在 `buildProxyPool` 里设置）。
 7. 请求由代理池发出：`pool.do(ctx, httpReq, body, log)`（现有实现，含多代理重试与冷却）。
 
+### 6.5 upstream.go 对外接口（server.go 只依赖这几个符号，签名不许改）
+
+```go
+// apiError 是已归类好的错误，server.go 直接拿它写 OpenAI 错误信封（§9.3）。
+type apiError struct {
+	Status  int    // HTTP 状态码
+	Code    string // 错误码
+	Message string // 中文/上游原文（截断 ≤512 字节）
+	Type    string // OpenAI 的 error.type
+}
+
+func (e *apiError) Error() string
+
+// 构造上游请求（§6.1-§6.5）。clientReq 是客户端的原始请求（取 X-Request-Id 用）。
+func buildUpstreamRequest(cfg *config, clientReq *http.Request, clientModel, upstreamModel string, forceUpstreamStream bool) (*http.Request, map[string]string, []byte, error)
+
+// 每次重试时构造带新 body reader 的请求（proxy.go 的 do 会调用它）。
+func cloneWithBody(ctx context.Context, base *http.Request, body []byte) *http.Request
+
+// 非流式：返回（响应体字节, Content-Type, 错误）。
+// force / pass 两种策略都在这里分支；reject 由 server.go 提前拦掉。
+func executeNonStream(ctx context.Context, cfg *config, log *logger, pool *proxyPool, clientReq *http.Request, body []byte, clientModel, upstreamModel string) ([]byte, string, *apiError)
+
+// 流式：只负责「拿到上游响应体」，返回（上游 body, 上游响应头, 错误）。
+// 调用方负责 Close 与逐帧中继；上游非 2xx 时返回 *apiError（此时 body 已关）。
+func executeStreamUpstream(ctx context.Context, cfg *config, log *logger, pool *proxyPool, clientReq *http.Request, body []byte, clientModel, upstreamModel string) (io.ReadCloser, map[string]string, *apiError)
+
+// SSE 中继（§8）：按行读 in，只取 data: 行，还原工具名 + 改写 model，逐帧写 out 并 flush。
+// in 读到 EOF 视为正常结束；读错误返回 error（调用方记 warn 并结束响应）。
+func relaySSE(ctx context.Context, in io.Reader, out io.Writer, flush func(), renamed map[string]string, clientModel string, restoreToolNames bool, log *logger) error
+```
+
 ## §7 非流式（`server.go` 里调 `upstream.go` 的执行函数）
 
 `nonstream_policy` 三策略：
@@ -331,6 +364,7 @@ func writeError(w http.ResponseWriter, status int, code, message, errType string
 
 ```
 1. flag.Parse()（-config / -version）；-version → 打印 "<name> <version>" 后 exit 0
+   （`const version` 定义在 `version.go`，不在 main.go）
 2. 读配置 → 失败：fmt.Fprintln(os.Stderr, err) + os.Exit(1)
 3. newLogger(cfg.Server.LogLevel, cfg.Server.LogFile)
 4. info 打印：版本、生效配置 summary()
@@ -342,7 +376,7 @@ func writeError(w http.ResponseWriter, status int, code, message, errType string
 9. 等 SIGINT/SIGTERM → 优雅关闭
 ```
 
-`const version = "0.1.0"`（同时用于 `/healthz`、启动日志、目录 UA）。
+`const version = "0.1.0"`（定义在 `version.go`，同时用于 `/healthz`、启动日志、目录 UA）。
 
 ## §12 测试要求
 
