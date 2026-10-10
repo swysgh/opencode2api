@@ -37,6 +37,29 @@ cp config.example.yaml config.yaml
 
 默认监听 `127.0.0.1:8318`。`server.api_keys` 为空时 `/v1` 不鉴权（仅建议本机监听时使用）。
 
+## 部署（ai，原生 systemd）
+
+生产实例跑在 `ai`（10.1.0.8）的 LXC 层，不用 docker：
+
+| 项 | 值 |
+|---|---|
+| 目录 | `/zfspool/data/ai/zen2api/`（源码 `src/`、配置 `config.yaml`、二进制 `zen2api`、缓存 `data/`） |
+| 二进制 | `/zfspool/data/ai/zen2api/zen2api` |
+| 服务账号 | `app`（uid 10001，与容器内一致 → `data/` 属主不用动） |
+| 单元 | `zen2api.service`（备份在 `/zfspool/share/nas/config/systemd/ai/`） |
+| 监听 | `0.0.0.0:3068`（`server.listen`；对外 `http://10.1.0.8:3068/v1`，不鉴权） |
+| 日志 | `journalctl -u zen2api -f` |
+
+```bash
+# 编译（在 ai 上，它自带 Go；GOTOOLCHAIN=auto 会自动拉 go1.26）
+cd /zfspool/data/ai/zen2api/src
+CGO_ENABLED=0 go build -buildvcs=false -trimpath -ldflags "-s -w" -o ../zen2api .
+systemctl restart zen2api
+curl -s http://10.1.0.8:3068/healthz
+```
+
+> 二进制是静态的，目标机不需要 Go；`data/catalog.json` 属 uid 10001（`chown -R 10001:10001 data`）。
+
 ## 客户端接法
 
 - **Base URL**：`http://<host>:8318/v1`
