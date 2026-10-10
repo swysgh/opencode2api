@@ -2,4 +2,5 @@
 /bin/
 /data/
 config.yaml
+/docker-compose.yml
 *.log

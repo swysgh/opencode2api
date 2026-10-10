@@ -43,7 +43,7 @@ cp config.example.yaml config.yaml
 
 | 项 | 值 |
 |---|---|
-| 目录 | `/zfspool/data/ai/zen2api/`（源码 `src/`、配置 `config.yaml`、二进制 `zen2api`、缓存 `data/`） |
+| 目录 | `/zfspool/data/ai/zen2api/`（**项目根 = 源码仓库根**：源码与 `config.yaml`、二进制 `zen2api`、缓存 `data/` 同层） |
 | 二进制 | `/zfspool/data/ai/zen2api/zen2api` |
 | 服务账号 | `app`（uid 10001，与容器内一致 → `data/` 属主不用动） |
 | 单元 | `zen2api.service`（备份在 `/zfspool/share/nas/config/systemd/ai/`） |
@@ -52,8 +52,8 @@ cp config.example.yaml config.yaml
 
 ```bash
 # 编译（在 ai 上，它自带 Go；GOTOOLCHAIN=auto 会自动拉 go1.26）
-cd /zfspool/data/ai/zen2api/src
-CGO_ENABLED=0 go build -buildvcs=false -trimpath -ldflags "-s -w" -o ../zen2api .
+cd /zfspool/data/ai/zen2api
+CGO_ENABLED=0 go build -buildvcs=false -trimpath -ldflags "-s -w" -o zen2api .
 systemctl restart zen2api
 curl -s http://10.1.0.8:3068/healthz
 ```
