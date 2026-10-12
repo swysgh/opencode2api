@@ -384,3 +384,112 @@ proxy:
 		t.Fatalf("summary 缺 base_url 行:\n%s", s)
 	}
 }
+
+// TestDecodeConfigResponsesAndExcludeModels responses_models / exclude_models
+// 解析、去空白、去重保序（§1.2）。
+func TestDecodeConfigResponsesAndExcludeModels(t *testing.T) {
+	cfg, err := decodeConfig([]byte(`
+upstream:
+  responses_models: [" muse-spark-1.3-contributor-free ", "muse-spark-1.2-contributor-free", "muse-spark-1.3-contributor-free"]
+  exclude_models: ["jev-1.13-free", "jev-1.13-free"]
+`))
+	if err != nil {
+		t.Fatalf("配置: %v", err)
+	}
+	wantResp := []string{"muse-spark-1.3-contributor-free", "muse-spark-1.2-contributor-free"}
+	if len(cfg.Upstream.ResponsesModels) != len(wantResp) {
+		t.Fatalf("responses_models = %v，期望 %v", cfg.Upstream.ResponsesModels, wantResp)
+	}
+	for i := range wantResp {
+		if cfg.Upstream.ResponsesModels[i] != wantResp[i] {
+			t.Fatalf("responses_models[%d] = %q，期望 %q", i, cfg.Upstream.ResponsesModels[i], wantResp[i])
+		}
+	}
+	if len(cfg.Upstream.ExcludeModels) != 1 || cfg.Upstream.ExcludeModels[0] != "jev-1.13-free" {
+		t.Fatalf("exclude_models = %v", cfg.Upstream.ExcludeModels)
+	}
+
+	if !cfg.isResponsesModel("muse-spark-1.3-contributor-free") {
+		t.Fatal("isResponsesModel 应命中 muse-spark-1.3-contributor-free")
+	}
+	if cfg.isResponsesModel("big-pickle") {
+		t.Fatal("isResponsesModel 不该命中 big-pickle")
+	}
+	if !cfg.isExcludedModel("jev-1.13-free") {
+		t.Fatal("isExcludedModel 应命中 jev-1.13-free")
+	}
+	if cfg.isExcludedModel("big-pickle") {
+		t.Fatal("isExcludedModel 不该命中 big-pickle")
+	}
+}
+
+// TestDecodeConfigResponsesEmptyItemError 空项报错（带字段名与下标，§1.2）。
+func TestDecodeConfigResponsesEmptyItemError(t *testing.T) {
+	cases := []struct {
+		name    string
+		yaml    string
+		wantErr string
+	}{
+		{"responses_models 空项", "upstream:\n  responses_models: [\"a\", \"  \"]\n", "upstream.responses_models[1]: 不能为空"},
+		{"exclude_models 空项", "upstream:\n  exclude_models: [\"\"]\n", "upstream.exclude_models[0]: 不能为空"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := decodeConfig([]byte(tc.yaml))
+			if err == nil {
+				t.Fatal("期望报错，实际通过")
+			}
+			if !strings.Contains(err.Error(), "配置错误") {
+				t.Fatalf("错误信息应含「配置错误」: %q", err.Error())
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("错误信息 %q 未包含 %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestConfigMatchesUpstreamExclude exclude_models 覆盖 models 与 match_regex 命中（§1.5）。
+func TestConfigMatchesUpstreamExclude(t *testing.T) {
+	cfg, err := decodeConfig([]byte(`
+upstream:
+  models: ["mimo-v2.5-free", "jev-1.13-free"]
+  exclude_models: ["jev-1.13-free"]
+`))
+	if err != nil {
+		t.Fatalf("配置: %v", err)
+	}
+	if !cfg.matchesUpstream("mimo-v2.5-free") {
+		t.Fatal("未被排除的显式模型应命中")
+	}
+	if cfg.matchesUpstream("jev-1.13-free") {
+		t.Fatal("被 exclude_models 排除的模型不该命中")
+	}
+	// match_regex 命中但被 exclude 排除 → false。
+	cfg2, err := decodeConfig([]byte("upstream:\n  exclude_models: [\"whatever-free\"]\n"))
+	if err != nil {
+		t.Fatalf("配置: %v", err)
+	}
+	if cfg2.matchesUpstream("whatever-free") {
+		t.Fatal("正则命中但 exclude 应使其返回 false")
+	}
+}
+
+// TestConfigSummaryIncludesResponsesModels summary 里含两个新行（§1.6）。
+func TestConfigSummaryIncludesResponsesModels(t *testing.T) {
+	cfg, err := decodeConfig([]byte(`
+upstream:
+  responses_models: ["muse-spark-1.3-contributor-free"]
+  exclude_models: ["jev-1.13-free"]
+`))
+	if err != nil {
+		t.Fatalf("配置: %v", err)
+	}
+	s := cfg.summary()
+	if !strings.Contains(s, "responses_models=1[muse-spark-1.3-contributor-free]") {
+		t.Fatalf("summary 缺 responses_models 行:\n%s", s)
+	}
+	if !strings.Contains(s, "exclude_models=1[jev-1.13-free]") {
+		t.Fatalf("summary 缺 exclude_models 行:\n%s", s)
+	}
+}

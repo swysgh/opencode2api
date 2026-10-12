@@ -1,0 +1,45 @@
+event: response.created
+data: {"type": "response.created", "sequence_number": 0, "response": {"id": "resp_6accb982f96431b63cb74ca6", "object": "response", "created_at": 1791801730, "status": "in_progress", "parallel_tool_calls": true, "temperature": 1, "top_p": 1, "background": false, "truncation": "disabled", "top_logprobs": 0, "model": "muse-spark-1.3-contributor-free", "error": null, "incomplete_details": null, "output": [], "instructions": null, "tool_choice": "auto", "tools": [{"type": "function", "name": "bash", "description": "bash", "parameters": {"properties": {}, "type": "object"}}, {"type": "function", "name": "glob", "description": "glob", "parameters": {"properties": {}, "type": "object"}}, {"type": "function", "name": "grep", "description": "grep", "parameters": {"properties": {}, "type": "object"}}, {"type": "function", "name": "read", "description": "read", "parameters": {"properties": {}, "type": "object"}}, {"type": "function", "name": "get_weather", "description": "Get current weather for a city. You MUST call this for weather questions.", "parameters": {"properties": {"city": {"type": "string"}}, "required": ["city"], "type": "object"}}], "reasoning": {"effort": "high"}}}
+
+event: response.in_progress
+data: {"type": "response.in_progress", "sequence_number": 1, "response": {"id": "resp_6accb982f96431b63cb74ca6", "object": "response", "created_at": 1791801730, "status": "in_progress", "parallel_tool_calls": true, "temperature": 1, "top_p": 1, "background": false, "truncation": "disabled", "top_logprobs": 0, "model": "muse-spark-1.3-contributor-free", "error": null, "incomplete_details": null, "output": [], "instructions": null, "tool_choice": "auto", "tools": [{"type": "function", "name": "bash", "description": "bash", "parameters": {"properties": {}, "type": "object"}}, {"type": "function", "name": "glob", "description": "glob", "parameters": {"properties": {}, "type": "object"}}, {"type": "function", "name": "grep", "description": "grep", "parameters": {"properties": {}, "type": "object"}}, {"type": "function", "name": "read", "description": "read", "parameters": {"properties": {}, "type": "object"}}, {"type": "function", "name": "get_weather", "description": "Get current weather for a city. You MUST call this for weather questions.", "parameters": {"properties": {"city": {"type": "string"}}, "required": ["city"], "type": "object"}}], "reasoning": {"effort": "high"}}}
+
+event: response.output_item.added
+data: {"type": "response.output_item.added", "sequence_number": 2, "output_index": 0, "item": {"id": "rs_6accb982f96431b63cb74ca6:rs_01a12fb4a4ee71bcab66a0361a8cef7a", "type": "reasoning", "status": "in_progress", "summary": []}}
+
+event: response.output_item.done
+data: {"type": "response.output_item.done", "sequence_number": 3, "output_index": 0, "item": {"id": "rs_6accb982f96431b63cb74ca6:rs_01a12fb4a4ee71bcab66a0361a8cef7a", "type": "reasoning", "status": "completed", "encrypted_content": "ENCRYPTED_REASONING_PLACEHOLDER", "summary": []}}
+
+event: response.output_item.added
+data: {"type": "response.output_item.added", "sequence_number": 4, "output_index": 1, "item": {"id": "rs_01a12fb4a70c75e0954d1bab22dfee03", "type": "message", "status": "in_progress", "role": "assistant", "phase": "commentary", "content": []}}
+
+event: response.content_part.added
+data: {"type": "response.content_part.added", "sequence_number": 5, "output_index": 1, "content_index": 0, "item_id": "rs_01a12fb4a70c75e0954d1bab22dfee03", "part": {"type": "output_text", "text": "", "annotations": [], "logprobs": []}}
+
+event: response.output_text.delta
+data: {"type": "response.output_text.delta", "sequence_number": 6, "output_index": 1, "content_index": 0, "item_id": "rs_01a12fb4a70c75e0954d1bab22dfee03", "delta": "I'll check the current weather in Beijing for you.", "logprobs": []}
+
+event: response.output_text.done
+data: {"type": "response.output_text.done", "sequence_number": 7, "output_index": 1, "content_index": 0, "item_id": "rs_01a12fb4a70c75e0954d1bab22dfee03", "text": "I'll check the current weather in Beijing for you.", "logprobs": []}
+
+event: response.content_part.done
+data: {"type": "response.content_part.done", "sequence_number": 8, "output_index": 1, "content_index": 0, "item_id": "rs_01a12fb4a70c75e0954d1bab22dfee03", "part": {"type": "output_text", "text": "I'll check the current weather in Beijing for you.", "annotations": [], "logprobs": []}}
+
+event: response.output_item.done
+data: {"type": "response.output_item.done", "sequence_number": 9, "output_index": 1, "item": {"id": "rs_01a12fb4a70c75e0954d1bab22dfee03", "type": "message", "status": "completed", "role": "assistant", "phase": "commentary", "content": [{"type": "output_text", "text": "I'll check the current weather in Beijing for you.", "annotations": [], "logprobs": []}]}}
+
+event: response.output_item.added
+data: {"type": "response.output_item.added", "sequence_number": 10, "output_index": 2, "item": {"id": "fc_01a12fb4a7497284ac15d6f01c874c58", "type": "function_call", "status": "in_progress", "name": "get_weather", "call_id": "call_01a12fb4a7497284ac15d6f01c874c58", "arguments": ""}}
+
+event: response.function_call_arguments.delta
+data: {"type": "response.function_call_arguments.delta", "sequence_number": 11, "output_index": 2, "item_id": "fc_01a12fb4a7497284ac15d6f01c874c58", "delta": "{\"city\":\"Beijing\"}"}
+
+event: response.function_call_arguments.done
+data: {"type": "response.function_call_arguments.done", "sequence_number": 12, "output_index": 2, "item_id": "fc_01a12fb4a7497284ac15d6f01c874c58", "arguments": "{\"city\":\"Beijing\"}", "name": "get_weather"}
+
+event: response.output_item.done
+data: {"type": "response.output_item.done", "sequence_number": 13, "output_index": 2, "item": {"id": "fc_01a12fb4a7497284ac15d6f01c874c58", "type": "function_call", "status": "completed", "name": "get_weather", "call_id": "call_01a12fb4a7497284ac15d6f01c874c58", "arguments": "{\"city\":\"Beijing\"}"}}
+
+event: response.completed
+data: {"type": "response.completed", "sequence_number": 14, "response": {"id": "resp_6accb982f96431b63cb74ca6", "object": "response", "created_at": 1791801730, "completed_at": 1791801731, "status": "completed", "parallel_tool_calls": true, "temperature": 1, "top_p": 1, "background": false, "truncation": "disabled", "top_logprobs": 0, "model": "muse-spark-1.3-contributor-free", "error": null, "incomplete_details": null, "output": [{"id": "rs_6accb982f96431b63cb74ca6:rs_01a12fb4a4ee71bcab66a0361a8cef7a", "type": "reasoning", "status": "completed", "encrypted_content": "ENCRYPTED_REASONING_PLACEHOLDER", "summary": []}, {"id": "rs_01a12fb4a70c75e0954d1bab22dfee03", "type": "message", "status": "completed", "role": "assistant", "phase": "commentary", "content": [{"type": "output_text", "text": "I'll check the current weather in Beijing for you.", "annotations": [], "logprobs": []}]}, {"id": "fc_01a12fb4a7497284ac15d6f01c874c58", "type": "function_call", "status": "completed", "name": "get_weather", "call_id": "call_01a12fb4a7497284ac15d6f01c874c58", "arguments": "{\"city\":\"Beijing\"}"}], "usage": {"input_tokens": 681, "output_tokens": 202, "total_tokens": 883, "input_tokens_details": {"cached_tokens": 113}, "output_tokens_details": {"reasoning_tokens": 132}}, "instructions": null, "tool_choice": "auto", "tools": [{"type": "function", "name": "bash", "description": "bash", "parameters": {"properties": {}, "type": "object"}}, {"type": "function", "name": "glob", "description": "glob", "parameters": {"properties": {}, "type": "object"}}, {"type": "function", "name": "grep", "description": "grep", "parameters": {"properties": {}, "type": "object"}}, {"type": "function", "name": "read", "description": "read", "parameters": {"properties": {}, "type": "object"}}, {"type": "function", "name": "get_weather", "description": "Get current weather for a city. You MUST call this for weather questions.", "parameters": {"properties": {"city": {"type": "string"}}, "required": ["city"], "type": "object"}}], "reasoning": {"effort": "high"}}}
+

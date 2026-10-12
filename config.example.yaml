@@ -10,6 +10,8 @@ upstream:
   base_url: "https://opencode.ai/zen/v1"
   model_prefix: "oc/"
   models: []
+  responses_models: []   # 只支持 /responses 协议的上游模型 id
+  exclude_models: []     # 从暴露集合中剔除的上游模型 id
   match_regex: '(-free$)|(^big-pickle$)|(^space-bunny)'
   model_aliases: {}
   catalog_file: "./data/catalog.json"

@@ -127,9 +127,11 @@ type config struct {
 	Proxy    proxyConfig    `yaml:"proxy"`
 
 	// 归一化后的派生值（不是配置项，由 normalize 填充）。
-	matchRe  *regexp.Regexp
-	ttl      time.Duration
-	modelSet map[string]struct{}
+	matchRe      *regexp.Regexp
+	ttl          time.Duration
+	modelSet     map[string]struct{}
+	responsesSet map[string]struct{}
+	excludeSet   map[string]struct{}
 }
 
 // serverConfig 是对外 HTTP 服务分组（§3.2）。
@@ -147,6 +149,8 @@ type upstreamConfig struct {
 	BaseURL          *string             `yaml:"base_url"`           // 默认 "https://opencode.ai/zen/v1"；显式空/非法 → 报错
 	ModelPrefix      string              `yaml:"model_prefix"`       // 默认 "oc/"
 	Models           []string            `yaml:"models"`             // 默认 []
+	ResponsesModels  []string            `yaml:"responses_models"`   // 默认 []，只支持 /responses 的上游 id
+	ExcludeModels    []string            `yaml:"exclude_models"`     // 默认 []，从暴露集合中剔除的上游 id
 	MatchRegex       string              `yaml:"match_regex"`        // 默认 `(-free$)|(^big-pickle$)|(^space-bunny)`
 	ModelAliases     map[string][]string `yaml:"model_aliases"`      // 默认 {}
 	CatalogFile      string              `yaml:"catalog_file"`       // 默认 "./data/catalog.json"
@@ -370,6 +374,20 @@ func (c *config) normalize() error {
 	u.Models = out
 	c.modelSet = seen
 
+	// responses_models / exclude_models：去空白、空项报错、去重保序。
+	rm, rset, errRM := normalizeUpstreamIDList(u.ResponsesModels, "upstream.responses_models")
+	if errRM != nil {
+		return errRM
+	}
+	u.ResponsesModels = rm
+	c.responsesSet = rset
+	em, eset, errEM := normalizeUpstreamIDList(u.ExcludeModels, "upstream.exclude_models")
+	if errEM != nil {
+		return errEM
+	}
+	u.ExcludeModels = em
+	c.excludeSet = eset
+
 	// 别名表归一化：去空白、去空项、去重。
 	if u.ModelAliases == nil {
 		u.ModelAliases = map[string][]string{}
@@ -538,16 +556,62 @@ func (c *config) normalize() error {
 	return nil
 }
 
+// normalizeUpstreamIDList 归一化一个上游 id 列表：去空白、空项报错（带字段名与下标）、
+// 去重保序（保留首次出现的顺序），并返回查找集合。
+func normalizeUpstreamIDList(items []string, field string) ([]string, map[string]struct{}, error) {
+	out := make([]string, 0, len(items))
+	set := map[string]struct{}{}
+	for i, raw := range items {
+		v := strings.TrimSpace(raw)
+		if v == "" {
+			return nil, nil, fmt.Errorf("配置错误: %s[%d]: 不能为空", field, i)
+		}
+		if _, dup := set[v]; dup {
+			continue
+		}
+		set[v] = struct{}{}
+		out = append(out, v)
+	}
+	return out, set, nil
+}
+
+// isResponsesModel 判断上游 id 是否必须走 /responses 协议。
+func (c *config) isResponsesModel(upstreamID string) bool {
+	if upstreamID == "" {
+		return false
+	}
+	_, ok := c.responsesSet[upstreamID]
+	return ok
+}
+
+// isExcludedModel 判断上游 id 是否被显式排除。
+func (c *config) isExcludedModel(upstreamID string) bool {
+	if upstreamID == "" {
+		return false
+	}
+	_, ok := c.excludeSet[upstreamID]
+	return ok
+}
+
 // matchesUpstream 判断一个上游 id 是否需要暴露（§5.1）：
-// 命中 models 精确名单，或命中 match_regex。
+// 命中 models 精确名单，或命中 match_regex；命中 excludeSet 一律不暴露。
 func (c *config) matchesUpstream(id string) bool {
 	if id == "" {
 		return false
 	}
 	if _, ok := c.modelSet[id]; ok {
+		if _, excluded := c.excludeSet[id]; excluded {
+			return false
+		}
 		return true
 	}
-	return c.matchRe != nil && c.matchRe.MatchString(id)
+	if c.matchRe != nil && c.matchRe.MatchString(id) {
+		if _, excluded := c.excludeSet[id]; excluded {
+			return false
+		}
+		return true
+	}
+	return false
 }
 
 // maskAPIKey 脱敏 api_key：只留前 4 位 + ***（不足 4 位全打 ***，§3.4）。
@@ -589,6 +653,10 @@ func (c *config) summary() string {
 	}
 	models := append([]string(nil), c.Upstream.Models...)
 	sort.Strings(models)
+	responsesModels := append([]string(nil), c.Upstream.ResponsesModels...)
+	sort.Strings(responsesModels)
+	excludeModels := append([]string(nil), c.Upstream.ExcludeModels...)
+	sort.Strings(excludeModels)
 	aliases := make([]string, 0, len(c.Upstream.ModelAliases))
 	for id, names := range c.Upstream.ModelAliases {
 		aliases = append(aliases, fmt.Sprintf("%s→[%s]", id, strings.Join(names, ",")))
@@ -612,6 +680,8 @@ func (c *config) summary() string {
 	fmt.Fprintf(&b, "base_url=%q\n", *c.Upstream.BaseURL)
 	fmt.Fprintf(&b, "model_prefix=%q\n", c.Upstream.ModelPrefix)
 	fmt.Fprintf(&b, "models=%d[%s]\n", len(models), strings.Join(models, ","))
+	fmt.Fprintf(&b, "responses_models=%d[%s]\n", len(responsesModels), strings.Join(responsesModels, ","))
+	fmt.Fprintf(&b, "exclude_models=%d[%s]\n", len(excludeModels), strings.Join(excludeModels, ","))
 	fmt.Fprintf(&b, "match_regex=%q\n", c.Upstream.MatchRegex)
 	fmt.Fprintf(&b, "model_aliases=%d[%s]\n", len(aliases), strings.Join(aliases, ";"))
 	fmt.Fprintf(&b, "catalog_file=%q\n", c.Upstream.CatalogFile)

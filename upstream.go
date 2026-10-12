@@ -47,6 +47,15 @@ func apiErrorFromUpstream(status int, body []byte) *apiError {
 	return &apiError{Status: status, Code: code, Message: msg, Type: code}
 }
 
+// warnChatProtocolUnsupported 在上游以 ModelProtocolUnsupported 拒绝 chat 请求时给一条排障提示（§5）：
+// 该模型很可能只支持 /responses，需要加入 upstream.responses_models。错误体与状态码照旧透传。
+func warnChatProtocolUnsupported(log *logger, upstreamModel string, ae *apiError) {
+	if log == nil || ae == nil || ae.Code != "ModelProtocolUnsupported" {
+		return
+	}
+	log.warn(fmt.Sprintf("上游拒绝 chat 协议，模型 %s 可能需要加入 upstream.responses_models", upstreamModel), nil)
+}
+
 // buildUpstreamRequest 构造发往上游的请求（§6）：
 //  1. 从客户端请求体读原始字节，顶层 model 改写成上游 id；
 //  2. 指纹改造（四件套工具 / 强制 stream），失败按原样发送；
@@ -142,14 +151,18 @@ func executeNonStream(ctx context.Context, cfg *config, log *logger, pool *proxy
 	if !forceAggregate {
 		// pass：原样透传；上游错误仍以真实状态码走错误信封，客户端才看得到 403 FreeTierError。
 		if status >= 400 {
-			return nil, "application/json", apiErrorFromUpstream(status, lastErrBody)
+			ae := apiErrorFromUpstream(status, lastErrBody)
+			warnChatProtocolUnsupported(log, upstreamModel, ae)
+			return nil, "application/json", ae
 		}
 		bodyBytes, _ := readAll(resp.Body)
 		return bodyBytes, "application/json", nil
 	}
 
 	if status >= 400 {
-		return nil, "application/json", apiErrorFromUpstream(status, lastErrBody)
+		ae := apiErrorFromUpstream(status, lastErrBody)
+		warnChatProtocolUnsupported(log, upstreamModel, ae)
+		return nil, "application/json", ae
 	}
 
 	// force 聚合：把上游 SSE 聚成一个 chat.completion。
@@ -182,6 +195,7 @@ func executeStreamUpstream(ctx context.Context, cfg *config, log *logger, pool *
 	status := resp.StatusCode
 	if status >= 400 {
 		ae := apiErrorFromUpstream(status, lastErrBody)
+		warnChatProtocolUnsupported(log, upstreamModel, ae)
 		_ = resp.Body.Close()
 		return nil, nil, ae
 	}

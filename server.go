@@ -155,7 +155,8 @@ func (s *server) clientModelNames() []string {
 func exposedFromCatalog(cfg *config, cat *catalog) []string {
 	set := map[string]struct{}{}
 	for _, id := range cfg.Upstream.Models {
-		if id != "" {
+		// 显式名单同样受 exclude_models 约束，否则「名单里有、排除里也有」时会互相矛盾。
+		if id != "" && !cfg.isExcludedModel(id) {
 			set[id] = struct{}{}
 		}
 	}
@@ -190,6 +191,7 @@ func (s *server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	var clientModel, upstreamModel string
 	var stream bool
+	proto := "chat"
 
 	defer func() {
 		if rec := recover(); rec != nil {
@@ -198,7 +200,7 @@ func (s *server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 			}
 			writeError(tr, http.StatusInternalServerError, "internal_error", "服务内部错误", "internal_error")
 		}
-		s.logRequest(clientModel, upstreamModel, stream, tr, start)
+		s.logRequest(clientModel, upstreamModel, proto, stream, tr, start)
 	}()
 
 	if r.Method != http.MethodPost {
@@ -256,6 +258,17 @@ func (s *server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 上游按模型分协议：只支持 /responses 的模型走协议翻译通道（别名已解析成上游 id）。
+	if s.cfg.isResponsesModel(upstreamModel) {
+		proto = "responses"
+		if stream {
+			s.streamChatResponses(tr, r, data, clientModel, upstreamModel)
+		} else {
+			s.nonStreamChatResponses(tr, r, data, clientModel, upstreamModel)
+		}
+		return
+	}
+
 	if stream {
 		s.streamChat(tr, r, data, clientModel, upstreamModel)
 		return
@@ -299,6 +312,59 @@ func (s *server) nonStreamChat(w http.ResponseWriter, r *http.Request, data []by
 		return
 	}
 	out, ct, ae := executeNonStream(r.Context(), s.cfg, s.log, s.pool, r, data, clientModel, upstreamModel)
+	if ae != nil {
+		writeError(w, ae.Status, ae.Code, ae.Message, ae.Type)
+		return
+	}
+	if ct == "" {
+		ct = "application/json"
+	}
+	w.Header().Set("Content-Type", ct)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(out)
+}
+
+// streamChatResponses 处理走 /responses 上游的 stream:true：设 SSE 响应头，
+// 拿上游 body 后逐帧翻译成 chat.completion.chunk 中继（§6）。
+func (s *server) streamChatResponses(w http.ResponseWriter, r *http.Request, data []byte, clientModel, upstreamModel string) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.Upstream.RequestTimeout.value(defaultRequestTimeout))
+	defer cancel()
+
+	in, renamed, ae := executeStreamUpstreamResponses(ctx, s.cfg, s.log, s.pool, r, data, clientModel, upstreamModel)
+	if ae != nil {
+		writeError(w, ae.Status, ae.Code, ae.Message, ae.Type)
+		return
+	}
+	defer in.Close()
+
+	flush := func() {
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	}
+	if err := relayResponsesSSE(ctx, in, w, flush, renamed, clientModel, s.cfg.restoreToolNames(), s.log); err != nil && s.log != nil {
+		s.log.warn("responses SSE 中继中断: "+err.Error(), nil)
+	}
+}
+
+// nonStreamChatResponses 处理走 /responses 上游的 stream:false（§6）：
+// reject 直接 400；其余策略恒走「强制 stream + 聚合」（上游免费档不接受 stream:false）。
+func (s *server) nonStreamChatResponses(w http.ResponseWriter, r *http.Request, data []byte, clientModel, upstreamModel string) {
+	if s.cfg.Upstream.NonStreamPolicy == nonStreamReject {
+		writeError(w, http.StatusBadRequest, "nonstream_rejected",
+			"OpenCode Zen 免费档只接受流式请求（stream:true）。请让客户端开启流式，或把配置 upstream.nonstream_policy 改为 force。",
+			"invalid_request_error")
+		return
+	}
+	if s.cfg.Upstream.NonStreamPolicy == nonStreamPass && s.log != nil {
+		s.log.warn("upstream.nonstream_policy=pass 对 responses 模型不适用，仍按强制 stream + 聚合处理", nil)
+	}
+	out, ct, ae := executeNonStreamResponses(r.Context(), s.cfg, s.log, s.pool, r, data, clientModel, upstreamModel)
 	if ae != nil {
 		writeError(w, ae.Status, ae.Code, ae.Message, ae.Type)
 		return
@@ -366,8 +432,8 @@ func writeError(w http.ResponseWriter, status int, code, message, errType string
 	_, _ = w.Write(b)
 }
 
-// logRequest 每请求一条 info 日志（§9.4）。
-func (s *server) logRequest(clientModel, upstreamModel string, stream bool, tr *tracker, start time.Time) {
+// logRequest 每请求一条 info 日志（§9.4）。proto 区分上游协议（chat|responses）。
+func (s *server) logRequest(clientModel, upstreamModel, proto string, stream bool, tr *tracker, start time.Time) {
 	if s.log == nil {
 		return
 	}
@@ -379,8 +445,8 @@ func (s *server) logRequest(clientModel, upstreamModel string, stream bool, tr *
 	if !tr.firstByte.IsZero() {
 		firstByteMs = tr.firstByte.Sub(start).Milliseconds()
 	}
-	msg := fmt.Sprintf("请求: client=%s upstream=%s stream=%t proxy=%s status=%d ms=%d first_byte_ms=%d",
-		clientModel, upstreamModel, stream, s.proxyLabel(), status, time.Since(start).Milliseconds(), firstByteMs)
+	msg := fmt.Sprintf("请求: client=%s upstream=%s proto=%s stream=%t proxy=%s status=%d ms=%d first_byte_ms=%d",
+		clientModel, upstreamModel, proto, stream, s.proxyLabel(), status, time.Since(start).Milliseconds(), firstByteMs)
 	s.log.info(msg, nil)
 }
 

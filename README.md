@@ -136,6 +136,31 @@ curl -N -X POST http://127.0.0.1:8318/v1/chat/completions \
 
 > 说明：`duration` 接受 `6h`、`30m`、`10s` 这类字符串，也接受以秒为单位的数字。
 
+## 上游按模型分协议（`/responses` 翻译）
+
+实测：opencode zen 免费档按模型分协议，客户端无感。
+
+| 上游模型 | 上游端点 |
+|---|---|
+| `big-pickle`、`space-bunny*`、`*-free`（mimo 等） | `/chat/completions` |
+| `muse-spark-1.2-contributor-free`、`muse-spark-1.3-contributor-free` | 只走 `/responses` |
+
+zen2api 对 `responses_models` 里的模型自动走 `/responses` 上游通道，并在内部做
+chat.completions ↔ responses 的协议翻译（含流式与非流式），客户端仍按普通 chat 请求调用。
+
+| 键 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `upstream.responses_models` | []string | `[]` | 上游只支持 `/responses` 的模型 id；命中即走协议翻译通道 |
+| `upstream.exclude_models` | []string | `[]` | 从暴露集合中剔除的上游 id（例如永远不可用的模型） |
+
+注意事项：
+
+- `upstream.nonstream_policy` 对 responses 模型**不适用**：上游免费档不接受 `stream:false`，
+  所以无论 `force`/`pass`，responses 路径都恒发 `stream:true` 并把 SSE 聚合成 `chat.completion`
+  （`pass` 时只在日志里记一条 warn）；`reject` 仍按原样返回 400 `nonstream_rejected`。
+- `/responses` 的 `tool_choice` **只接受 `"auto"`**：其它取值（`none`/`required`/具名函数）会被
+  翻译层丢弃，不会透传给上游。
+
 ## 出口代理池用法
 
 - **`proxies`**：直接内联出口列表。为空时隐式使用 `direct`（直连）。
