@@ -809,7 +809,7 @@ upstream:
 	}
 	rt := newRouter(cfg.Upstream.ModelPrefix, cfg.Upstream.ModelAliases)
 	rt.setExposed([]string{"muse-free"})
-	h := routes(&cfg, testLogger(), pool, rt, nil, time.Now())
+	h := routes(&cfg, testLogger(), pool, rt, nil, nil, time.Now())
 
 	// 流式。
 	rec := srvDo(h, http.MethodPost, "/v1/chat/completions", "",

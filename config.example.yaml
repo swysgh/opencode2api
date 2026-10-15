@@ -18,6 +18,10 @@ upstream:
   catalog_refresh: 6h
   catalog_timeout: 10s
   catalog_via_proxy: false
+  metadata_url: "https://models.opencode.ai/api.json"   # 官方模型目录；显式置空关闭元数据发现
+  metadata_file: "./data/metadata.json"
+  metadata_refresh: 24h
+  metadata_timeout: 15s
   inject_tools: true
   force_stream: true
   nonstream_policy: force

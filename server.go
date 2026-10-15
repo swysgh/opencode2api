@@ -18,11 +18,14 @@ const maxBodyBytesFallback = int64(67108864) // 64MiB
 
 // server 汇总 HTTP 层依赖（§9）。
 type server struct {
-	cfg       *config
-	log       *logger
-	pool      *proxyPool
-	rt        *router
-	cat       *catalog
+	cfg  *config
+	log  *logger
+	pool *proxyPool
+	rt   *router
+	cat  *catalog
+	meta *metadataStore
+	// metaDoer 是元数据拉取的出口（cfg.catalogViaProxy=true 时用代理池，nil=直连）。
+	metaDoer  httpDoer
 	startedAt time.Time
 }
 
@@ -32,8 +35,11 @@ type server struct {
 //   - POST /v1/chat/completions   鉴权后代理上游；
 //   - 其它 /v1/*                  鉴权后 404 错误信封；
 //   - 方法不符                    405 错误信封。
-func routes(cfg *config, log *logger, pool *proxyPool, rt *router, cat *catalog, startedAt time.Time) http.Handler {
-	s := &server{cfg: cfg, log: log, pool: pool, rt: rt, cat: cat, startedAt: startedAt}
+func routes(cfg *config, log *logger, pool *proxyPool, rt *router, cat *catalog, meta *metadataStore, startedAt time.Time) http.Handler {
+	s := &server{cfg: cfg, log: log, pool: pool, rt: rt, cat: cat, meta: meta, startedAt: startedAt}
+	if cfg.catalogViaProxy() {
+		s.metaDoer = pool
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.handleHealthz)
 	mux.HandleFunc("/v1/models", s.handleModels)
@@ -62,10 +68,11 @@ func (s *server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	b, _ := json.Marshal(map[string]any{
-		"status":  "ok",
-		"version": version,
-		"models":  len(s.rt.exposedList()),
-		"proxies": s.poolSize(),
+		"status":    "ok",
+		"version":   version,
+		"models":    len(s.rt.exposedList()),
+		"proxies":   s.poolSize(),
+		"metadata":  s.metadataCount(),
 	})
 	_, _ = w.Write(b)
 }
@@ -85,6 +92,7 @@ func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
 
 	// §5.3：/v1/models 请求时若缓存超过 catalog_refresh 则同步重拉，失败沿用缓存。
 	s.maybeRefreshCatalog(r.Context())
+	s.maybeRefreshMetadata(r.Context())
 
 	type modelEntry struct {
 		ID      string `json:"id"`
@@ -122,7 +130,7 @@ func (s *server) maybeRefreshCatalog(ctx context.Context) {
 		}
 		return
 	}
-	s.rt.setExposed(exposedFromCatalog(s.cfg, s.cat))
+	s.rt.setExposed(exposedFromCatalog(s.cfg, s.cat, s.meta))
 }
 
 // clientModelNames 汇总暴露集合里每个上游 id 的客户端调用名（前缀名 + 全部别名），排序去重。
@@ -151,8 +159,44 @@ func (s *server) clientModelNames() []string {
 	return out
 }
 
-// exposedFromCatalog 计算暴露集合（§5.1）：目录里命中 matchesUpstream 的 id ∪ 显式 models。
-func exposedFromCatalog(cfg *config, cat *catalog) []string {
+// maybeRefreshMetadata 在元数据缓存过期时同步重拉（同 catalog 的请求时刷新模式）。
+// catalog_via_proxy=true 时元数据也走代理池（api.json 同样可能被墙）。失败只 warn 沿用缓存。
+func (s *server) maybeRefreshMetadata(ctx context.Context) {
+	if s.meta == nil || s.cfg.Upstream.MetadataURL == "" {
+		return
+	}
+	if s.meta.age() <= s.cfg.Upstream.MetadataRefresh.value(defaultMetadataRefresh) {
+		return
+	}
+	if err := s.meta.refresh(ctx, s.cfg.Upstream.MetadataURL,
+		s.cfg.Upstream.MetadataTimeout.value(defaultMetadataTimeout), s.metaDoer); err != nil {
+		if s.log != nil {
+			s.log.warn("元数据刷新失败，沿用缓存: "+err.Error(), nil)
+		}
+		return
+	}
+	// 元数据变了，暴露集合跟着重算（同 catalog 刷新后的动作）。
+	s.rt.setExposed(exposedFromCatalog(s.cfg, s.cat, s.meta))
+	if s.log != nil {
+		s.log.info(fmt.Sprintf("元数据已刷新: models=%d protocols=%v", len(s.meta.models), s.meta.protocolCounts()), nil)
+	}
+}
+
+// metadataCount 返回已加载元数据的模型数（/healthz 用；无 store 时 0）。
+func (s *server) metadataCount() int {
+	if s.meta == nil {
+		return 0
+	}
+	return len(s.meta.models)
+}
+
+// exposedFromCatalog 计算暴露集合（§5.1，2026-10-15 起元数据优先）：
+//   - 显式 upstream.models（受 exclude_models 约束）；
+//   - 元数据可用时：目录 ∩ 元数据（免费档 cost 0/0 且非 deprecated，协议非 anthropic）；
+//   - 元数据不可用时回退 match_regex；另外正则对「元数据漏收的新模型」仍生效，
+//     但 deprecated 模型不再被正则捞回来（jev 前车之鉴：jev-1.13-free 元数据缺失
+//     实为已下线，正则暴露后必 400）。
+func exposedFromCatalog(cfg *config, cat *catalog, meta *metadataStore) []string {
 	set := map[string]struct{}{}
 	for _, id := range cfg.Upstream.Models {
 		// 显式名单同样受 exclude_models 约束，否则「名单里有、排除里也有」时会互相矛盾。
@@ -161,7 +205,24 @@ func exposedFromCatalog(cfg *config, cat *catalog) []string {
 		}
 	}
 	if cat != nil {
+		useMeta := meta != nil && meta.hasData()
 		for _, id := range cat.list() {
+			if cfg.isExcludedModel(id) {
+				continue
+			}
+			if _, explicit := set[id]; explicit {
+				continue
+			}
+			if useMeta {
+				if meta.metadataFreeActive(id) {
+					set[id] = struct{}{}
+				}
+				// 元数据说该模型不免费/已弃用 → 不暴露（正则不再兜底，防 jev 式幽灵模型）。
+				if _, known := meta.modelInfo(id); known {
+					continue
+				}
+			}
+			// 元数据未收录（新模型）→ 正则兜底。
 			if cfg.matchesUpstream(id) {
 				set[id] = struct{}{}
 			}
@@ -258,8 +319,9 @@ func (s *server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 上游按模型分协议：只支持 /responses 的模型走协议翻译通道（别名已解析成上游 id）。
-	if s.cfg.isResponsesModel(upstreamModel) {
+	// 协议路由：优先元数据（npm SDK 声明），fallback 到显式 responses_models。
+	// responses_models 语义收窄为「在白名单里追加 /responses 模型」，不再参与排除。
+	if s.protocolFor(upstreamModel) == "responses" || s.cfg.isResponsesModel(upstreamModel) {
 		proto = "responses"
 		if stream {
 			s.streamChatResponses(tr, r, data, clientModel, upstreamModel)
@@ -375,6 +437,18 @@ func (s *server) nonStreamChatResponses(w http.ResponseWriter, r *http.Request, 
 	w.Header().Set("Content-Type", ct)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(out)
+}
+
+// protocolFor 返回请求模型的上游协议：元数据未知时按 chat 兜底（老目录行为）。
+// anthropic 协议的模型不该进这条链路（暴露层已拦），兜底 chat 保持旧行为。
+func (s *server) protocolFor(upstreamModel string) string {
+	if s.meta == nil {
+		return "chat"
+	}
+	if p := s.meta.protocolOf(upstreamModel); p != "" {
+		return p
+	}
+	return "chat"
 }
 
 // authorized 校验 /v1/* 的 API key（§9.2）：api_keys 为空直接放行；

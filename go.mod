@@ -1,4 +1,4 @@
-module github.com/swysgh/zen2api
+module github.com/swysgh/opencode2api
 
 go 1.26.0
 

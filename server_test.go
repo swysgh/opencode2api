@@ -82,7 +82,7 @@ func srvTestHandler(t *testing.T, cfg *config, exposed []string) (http.Handler, 
 	}
 	rt := newRouter(cfg.Upstream.ModelPrefix, cfg.Upstream.ModelAliases)
 	rt.setExposed(exposed)
-	return routes(cfg, testLogger(), pool, rt, nil, time.Now()), pool
+	return routes(cfg, testLogger(), pool, rt, nil, nil, time.Now()), pool
 }
 
 // srvDo 打一次 handler；key 非空则带 Bearer。

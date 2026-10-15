@@ -72,7 +72,7 @@ func loadCatalog(path string) *catalog {
 // 调用方应使用缓存兜底（不要让启动失败，见 §5.3）。
 // doer 为 nil → 默认直连 &http.Client{Timeout: timeout}（catalog_via_proxy=false 时，
 // 避免代理配置错误连目录都拉不到）；非 nil → 用注入的出口（如代理池的 Do）。
-// UA 用 zen2api-catalog/<version>（§5.3）。
+// UA 用 opencode2api-catalog/<version>（§5.3）。
 func (c *catalog) fetch(ctx context.Context, baseURL string, timeout time.Duration, doer httpDoer) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -81,7 +81,7 @@ func (c *catalog) fetch(ctx context.Context, baseURL string, timeout time.Durati
 	if err != nil {
 		return fmt.Errorf("构造目录请求失败: %w", err)
 	}
-	req.Header.Set("User-Agent", "zen2api-catalog/"+version)
+	req.Header.Set("User-Agent", "opencode2api-catalog/"+version)
 	if doer == nil {
 		// 默认直连（catalog 拉取不走代理池，避免代理配置错误时连不上目录）。
 		doer = &http.Client{Timeout: timeout}

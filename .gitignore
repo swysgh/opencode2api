@@ -1,7 +1,9 @@
-/zen2api
+/opencode2api
 /bin/
 /data/
 config.yaml
 /docker-compose.yml
 *.log
+/opencode2api.bak.*
+/zen2api
 /zen2api.bak.*

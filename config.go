@@ -157,6 +157,10 @@ type upstreamConfig struct {
 	CatalogRefresh   *durationValue      `yaml:"catalog_refresh"`    // 默认 6h
 	CatalogTimeout   *durationValue      `yaml:"catalog_timeout"`    // 默认 10s
 	CatalogViaProxy  *bool               `yaml:"catalog_via_proxy"`  // 默认 false
+	MetadataURL      string              `yaml:"metadata_url"`       // 默认 "https://models.opencode.ai/api.json"
+	MetadataFile     string              `yaml:"metadata_file"`      // 默认 "./data/metadata.json"
+	MetadataRefresh  *durationValue      `yaml:"metadata_refresh"`   // 默认 24h
+	MetadataTimeout  *durationValue      `yaml:"metadata_timeout"`   // 默认 15s
 	InjectTools      *bool               `yaml:"inject_tools"`       // 默认 true
 	ForceStream      *bool               `yaml:"force_stream"`       // 默认 true
 	NonStreamPolicy  string              `yaml:"nonstream_policy"`   // 默认 "force"
@@ -200,6 +204,10 @@ func defaultConfig() config {
 			CatalogRefresh:   &durationValue{V: defaultCatalogRefresh, Set: false},
 			CatalogTimeout:   &durationValue{V: defaultCatalogTimeout, Set: false},
 			CatalogViaProxy:  boolPtr(false),
+			MetadataURL:      defaultMetadataURL,
+			MetadataFile:     defaultMetadataFile,
+			MetadataRefresh:  &durationValue{V: defaultMetadataRefresh, Set: false},
+			MetadataTimeout:  &durationValue{V: defaultMetadataTimeout, Set: false},
 			InjectTools:      boolPtr(true),
 			ForceStream:      boolPtr(true),
 			NonStreamPolicy:  nonStreamForce,
@@ -438,6 +446,29 @@ func (c *config) normalize() error {
 	if u.CatalogViaProxy == nil {
 		u.CatalogViaProxy = boolPtr(false)
 	}
+
+	// 元数据组：URL 允许为空串（显式关闭元数据发现），文件/刷新/超时同 catalog 的规矩。
+	u.MetadataURL = strings.TrimSpace(u.MetadataURL)
+	if u.MetadataFile == "" {
+		u.MetadataFile = defaultMetadataFile
+	}
+	if u.MetadataRefresh == nil {
+		u.MetadataRefresh = &durationValue{}
+	}
+	mr := u.MetadataRefresh.value(defaultMetadataRefresh)
+	if mr <= 0 {
+		return fmt.Errorf("配置错误: upstream.metadata_refresh: 必须是正数时长，收到 %s", u.MetadataRefresh.V)
+	}
+	u.MetadataRefresh.V = mr
+	if u.MetadataTimeout == nil {
+		u.MetadataTimeout = &durationValue{}
+	}
+	mto := u.MetadataTimeout.value(defaultMetadataTimeout)
+	if mto <= 0 {
+		return fmt.Errorf("配置错误: upstream.metadata_timeout: 必须是正数时长，收到 %s", u.MetadataTimeout.V)
+	}
+	u.MetadataTimeout.V = mto
+
 	if u.InjectTools == nil {
 		u.InjectTools = boolPtr(true)
 	}
@@ -687,6 +718,10 @@ func (c *config) summary() string {
 	fmt.Fprintf(&b, "catalog_file=%q\n", c.Upstream.CatalogFile)
 	fmt.Fprintf(&b, "catalog_refresh=%s\n", c.Upstream.CatalogRefresh.V)
 	fmt.Fprintf(&b, "catalog_timeout=%s\n", c.Upstream.CatalogTimeout.V)
+	fmt.Fprintf(&b, "metadata_url=%q\n", c.Upstream.MetadataURL)
+	fmt.Fprintf(&b, "metadata_file=%q\n", c.Upstream.MetadataFile)
+	fmt.Fprintf(&b, "metadata_refresh=%s\n", c.Upstream.MetadataRefresh.V)
+	fmt.Fprintf(&b, "metadata_timeout=%s\n", c.Upstream.MetadataTimeout.V)
 	fmt.Fprintf(&b, "catalog_via_proxy=%v\n", c.catalogViaProxy())
 	fmt.Fprintf(&b, "inject_tools=%v\n", c.injectTools())
 	fmt.Fprintf(&b, "force_stream=%v\n", c.forceStream())

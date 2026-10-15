@@ -21,7 +21,7 @@ func main() {
 
 	// -version：打印 "<name> <version>" 后 exit 0。
 	if *showVersion {
-		fmt.Printf("zen2api %s\n", version)
+		fmt.Printf("opencode2api %s\n", version)
 		return
 	}
 
@@ -43,7 +43,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	log.info(fmt.Sprintf("zen2api %s 启动", version), nil)
+	log.info(fmt.Sprintf("opencode2api %s 启动", version), nil)
 	log.info("生效配置:\n"+cfg.summary(), nil)
 	if len(cfg.Server.APIKeys) == 0 {
 		log.warn("未配置 api_keys，/v1 不鉴权（仅建议本机监听时使用）", nil)
@@ -59,6 +59,8 @@ func main() {
 
 	// 加载目录缓存并首次 fetch：失败只 warn（不致命，用缓存兜底，§5.3）。
 	cat := loadCatalog(cfg.Upstream.CatalogFile)
+	// 元数据同路：先读落盘缓存，再按需拉取（失败只 warn，元数据缺省时自动回退正则逻辑）。
+	meta := loadMetadata(cfg.Upstream.MetadataFile)
 	var doer httpDoer // nil = 直连
 	if cfg.catalogViaProxy() {
 		doer = pool
@@ -67,15 +69,26 @@ func main() {
 		cfg.Upstream.CatalogTimeout.value(defaultCatalogTimeout), doer); err != nil {
 		log.warn("首次拉取上游目录失败，沿用缓存: "+err.Error(), nil)
 	}
+	if cfg.Upstream.MetadataURL != "" {
+		if err := meta.refresh(context.Background(), cfg.Upstream.MetadataURL,
+			cfg.Upstream.MetadataTimeout.value(defaultMetadataTimeout), doer); err != nil {
+			log.warn("首次拉取元数据失败，沿用缓存: "+err.Error(), nil)
+		}
+	}
+	if meta.hasData() {
+		log.info(fmt.Sprintf("元数据加载完成: models=%d protocols=%v", len(meta.models), meta.protocolCounts()), nil)
+	} else {
+		log.warn("无元数据可用，暴露集合回退 match_regex 逻辑", nil)
+	}
 
-	// 建路由器，并同步暴露集合（目录命中 matchesUpstream 的 id ∪ 显式 models）。
+	// 建路由器，并同步暴露集合（显式 models ∪ 目录∩元数据免费档，或正则兜底）。
 	rt := newRouter(cfg.Upstream.ModelPrefix, cfg.Upstream.ModelAliases)
-	rt.setExposed(exposedFromCatalog(&cfg, cat))
+	rt.setExposed(exposedFromCatalog(&cfg, cat, meta))
 
 	startedAt := time.Now()
 	srv := &http.Server{
 		Addr:              cfg.Server.Listen,
-		Handler:           routes(&cfg, log, pool, rt, cat, startedAt),
+		Handler:           routes(&cfg, log, pool, rt, cat, meta, startedAt),
 		ReadHeaderTimeout: 30 * time.Second,
 	}
 

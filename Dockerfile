@@ -4,7 +4,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/zen2api .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/opencode2api .
 
 FROM debian:bookworm-slim
 RUN apt-get update \
@@ -14,9 +14,9 @@ RUN apt-get update \
  && mkdir -p /app/data \
  && chown -R app:app /app
 WORKDIR /app
-COPY --from=build /out/zen2api /app/zen2api
+COPY --from=build /out/opencode2api /app/opencode2api
 COPY config.example.yaml /app/config.example.yaml
 USER app
 EXPOSE 8318
-ENTRYPOINT ["/app/zen2api"]
+ENTRYPOINT ["/app/opencode2api"]
 CMD ["-config", "/app/config.yaml"]
