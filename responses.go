@@ -327,10 +327,17 @@ func buildResponsesUpstreamRequest(cfg *config, log *logger, clientReq *http.Req
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("构造上游请求失败: %w", err)
 	}
+	// 2026-10-14 起 V2 门禁：会话四头同值 + project=global（见 upstream.go）。
 	httpReq.Header.Set("Content-Type", "application/json")
+	// V2 要求 Authorization 存在，匿名免费档固定 Bearer public（见 upstream.go）。
+	httpReq.Header.Set("Authorization", "Bearer public")
 	httpReq.Header.Set("User-Agent", cfg.Upstream.UserAgent)
 	httpReq.Header.Set("x-opencode-client", cfg.Upstream.ClientName)
+	httpReq.Header.Set("x-opencode-project", "global")
 	httpReq.Header.Set("x-opencode-session", sessionID)
+	httpReq.Header.Set("x-session-id", sessionID)
+	httpReq.Header.Set("x-session-affinity", sessionID)
+	httpReq.Header.Set("x-opencode-session-id", sessionID)
 
 	return httpReq, renamed, body, nil
 }

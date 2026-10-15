@@ -26,7 +26,7 @@ func testUpstreamConfig(t *testing.T, baseURL, policy string) *config {
 upstream:
   base_url: %q
   user_agent: "opencode/9.9.9"
-  client_name: "desktop"
+  client_name: "cli"
   session_ttl: "30m"
   request_timeout: "5s"
   first_byte_timeout: "5s"
@@ -82,15 +82,25 @@ func TestBuildUpstreamRequestFingerprint(t *testing.T) {
 	if got := upReq.Header.Get("User-Agent"); got != cfg.Upstream.UserAgent {
 		t.Errorf("User-Agent = %q，期望 %q", got, cfg.Upstream.UserAgent)
 	}
-	if got := upReq.Header.Get("x-opencode-client"); got != "desktop" {
-		t.Errorf("x-opencode-client = %q，期望 desktop", got)
+	if got := upReq.Header.Get("x-opencode-client"); got != "cli" {
+		t.Errorf("x-opencode-client = %q，期望 cli", got)
 	}
 	sid := upReq.Header.Get("x-opencode-session")
 	if !regexp.MustCompile(`^ses_[0-9a-f]{12}[0-9a-zA-Z]{14}$`).MatchString(sid) {
 		t.Errorf("x-opencode-session = %q，不符合 ses_[0-9a-f]{12}[0-9a-zA-Z]{14}", sid)
 	}
-	if got := upReq.Header.Get("Authorization"); got != "" {
-		t.Errorf("Authorization 不应透传，实际 = %q", got)
+	// V2 门禁：客户端 Authorization 绝不透传，但必须显式发 Bearer public（匿名免费档）。
+	if got := upReq.Header.Get("Authorization"); got != "Bearer public" {
+		t.Errorf("Authorization = %q，期望固定 Bearer public（绝不透传客户端值）", got)
+	}
+	// V2 门禁：会话四头同值 + project=global。
+	for _, h := range []string{"x-session-id", "x-session-affinity", "x-opencode-session-id"} {
+		if got := upReq.Header.Get(h); got != sid {
+			t.Errorf("%s = %q，期望与 x-opencode-session 同值 %q", h, got, sid)
+		}
+	}
+	if got := upReq.Header.Get("x-opencode-project"); got != "global" {
+		t.Errorf("x-opencode-project = %q，期望 global", got)
 	}
 	if got := upReq.Header.Get("Accept-Encoding"); got != "" {
 		t.Errorf("不应设置 Accept-Encoding，实际 = %q", got)

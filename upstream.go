@@ -108,10 +108,21 @@ func buildUpstreamRequest(cfg *config, clientReq *http.Request, clientModel, ups
 		return nil, nil, nil, fmt.Errorf("构造上游请求失败: %w", err)
 	}
 	// 逐条显式设置，绝不透传客户端 Authorization，也不设 Accept-Encoding（§6.5）。
+	// 2026-10-14 起 V2 门禁（inference/v1）：会话四头同值（x-session-id /
+	// x-session-affinity / x-opencode-session-id 为 10-14 抓包 CLI 2.0.29 新增）；
+	// x-opencode-project 必须为 "global"（40-hex project id 触发 403）；
+	// x-opencode-request 不可发（其存在本身触发 403）。
 	httpReq.Header.Set("Content-Type", "application/json")
+	// V2 inference 服务要求 Authorization 存在，匿名免费档固定 Bearer public
+	//（2026-10-15 消融：无该头 403 FreeTierError，其余指纹全对也一样）。
+	httpReq.Header.Set("Authorization", "Bearer public")
 	httpReq.Header.Set("User-Agent", cfg.Upstream.UserAgent)
 	httpReq.Header.Set("x-opencode-client", cfg.Upstream.ClientName)
+	httpReq.Header.Set("x-opencode-project", "global")
 	httpReq.Header.Set("x-opencode-session", sessionID)
+	httpReq.Header.Set("x-session-id", sessionID)
+	httpReq.Header.Set("x-session-affinity", sessionID)
+	httpReq.Header.Set("x-opencode-session-id", sessionID)
 
 	return httpReq, renamed, body, nil
 }

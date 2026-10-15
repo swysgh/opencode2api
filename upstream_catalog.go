@@ -82,6 +82,17 @@ func (c *catalog) fetch(ctx context.Context, baseURL string, timeout time.Durati
 		return fmt.Errorf("构造目录请求失败: %w", err)
 	}
 	req.Header.Set("User-Agent", "opencode2api-catalog/"+version)
+	// 2026-10-14 V2 门禁：裸头拉目录会被 403（消融报告 2026-10-13），需全量指纹头。
+	// session 用固定演示值（目录请求不吃会话语义，但前缀须解出近期时间戳）。
+	if sess := sessionIDFor("catalog", 30*time.Minute, time.Now()); sess != "" {
+		req.Header.Set("Authorization", "Bearer public")
+		req.Header.Set("x-opencode-client", "cli")
+		req.Header.Set("x-opencode-project", "global")
+		req.Header.Set("x-opencode-session", sess)
+		req.Header.Set("x-session-id", sess)
+		req.Header.Set("x-session-affinity", sess)
+		req.Header.Set("x-opencode-session-id", sess)
+	}
 	if doer == nil {
 		// 默认直连（catalog 拉取不走代理池，避免代理配置错误时连不上目录）。
 		doer = &http.Client{Timeout: timeout}

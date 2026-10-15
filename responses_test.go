@@ -717,15 +717,16 @@ func TestBuildResponsesUpstreamRequest(t *testing.T) {
 	if got := upReq.Header.Get("User-Agent"); got != cfg.Upstream.UserAgent {
 		t.Fatalf("User-Agent = %q，期望 %q", got, cfg.Upstream.UserAgent)
 	}
-	if got := upReq.Header.Get("x-opencode-client"); got != "desktop" {
-		t.Fatalf("x-opencode-client = %q", got)
+	if got := upReq.Header.Get("x-opencode-client"); got != "cli" {
+		t.Fatalf("x-opencode-client = %q，期望 cli", got)
 	}
 	sid := upReq.Header.Get("x-opencode-session")
 	if !regexp.MustCompile(`^ses_[0-9a-f]{12}[0-9a-zA-Z]{14}$`).MatchString(sid) {
 		t.Fatalf("x-opencode-session = %q 不符合形状", sid)
 	}
-	if got := upReq.Header.Get("Authorization"); got != "" {
-		t.Fatalf("Authorization 不应透传，实际 = %q", got)
+	// V2 门禁：固定发 Bearer public，绝不透传客户端 Authorization。
+	if got := upReq.Header.Get("Authorization"); got != "Bearer public" {
+		t.Fatalf("Authorization = %q，期望固定 Bearer public", got)
 	}
 	if got := upReq.Header.Get("Accept-Encoding"); got != "" {
 		t.Fatalf("不应设置 Accept-Encoding，实际 = %q", got)

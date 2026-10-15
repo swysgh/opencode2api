@@ -28,7 +28,7 @@ const (
 )
 
 // 默认的上游目录基址（公开接口，无需鉴权）。
-const defaultBaseURL = "https://opencode.ai/zen/v1"
+const defaultBaseURL = "https://opencode.ai/inference/v1"
 
 // defaultMatchRegex 兜住免费档上游 id：*-free 结尾、以及两个不带 free 的免费模型。
 const defaultMatchRegex = `(-free$)|(^big-pickle$)|(^space-bunny)`
@@ -45,8 +45,10 @@ const (
 
 // upstream 分组默认值（§3.2）。
 const (
-	defaultUserAgent        = "opencode/1.18.31"
-	defaultClientName       = "desktop"
+	// 2026-10-14 起上游 V2 门禁：UA 必须是 opencode/latest/<ver>/cli 三段式
+	//（@opencode/cli 2.x），1.x 旧式 UA 会被 403 FreeTierError 拒绝。
+	defaultUserAgent        = "opencode/latest/2.0.29/cli"
+	defaultClientName       = "cli"
 	defaultCatalogFile      = "./data/catalog.json"
 	defaultSessionTTL       = 30 * time.Minute
 	defaultRequestTimeout   = 300 * time.Second
@@ -146,7 +148,7 @@ type serverConfig struct {
 
 // upstreamConfig 是上游相关分组（§3.2）。
 type upstreamConfig struct {
-	BaseURL          *string             `yaml:"base_url"`           // 默认 "https://opencode.ai/zen/v1"；显式空/非法 → 报错
+	BaseURL          *string             `yaml:"base_url"`           // 默认 "https://opencode.ai/inference/v1"（2026-10-14 V2 门禁迁移）；显式空/非法 → 报错
 	ModelPrefix      string              `yaml:"model_prefix"`       // 默认 "oc/"
 	Models           []string            `yaml:"models"`             // 默认 []
 	ResponsesModels  []string            `yaml:"responses_models"`   // 默认 []，只支持 /responses 的上游 id
@@ -165,8 +167,8 @@ type upstreamConfig struct {
 	ForceStream      *bool               `yaml:"force_stream"`       // 默认 true
 	NonStreamPolicy  string              `yaml:"nonstream_policy"`   // 默认 "force"
 	RestoreToolNames *bool               `yaml:"restore_tool_names"` // 默认 true
-	UserAgent        string              `yaml:"user_agent"`         // 默认 "opencode/1.18.31"
-	ClientName       string              `yaml:"client_name"`        // 默认 "desktop"
+	UserAgent        string              `yaml:"user_agent"`          // 默认 "opencode/latest/2.0.29/cli"
+	ClientName       string              `yaml:"client_name"`         // 默认 "cli"
 	SessionTTL       *durationValue      `yaml:"session_ttl"`        // 默认 30m
 	RequestTimeout   *durationValue      `yaml:"request_timeout"`    // 默认 300s
 	FirstByteTimeout *durationValue      `yaml:"first_byte_timeout"` // 默认 60s

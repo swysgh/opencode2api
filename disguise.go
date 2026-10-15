@@ -12,8 +12,43 @@ import (
 // 只给大写变体、或换成别的名字，都会 403 FreeTierError）。
 var quartetTools = []string{"bash", "glob", "grep", "read"}
 
-// decoyToolDescription 让模型不要真的去调这些占位工具。
+// decoyToolDescription 让模型不要真的去调这些占位工具（描述文案上游不校验，
+// 2026-10-15 消融：诱饵文案 + 真实参数 schema 仍 200）。
 const decoyToolDescription = "This tool is currently unavailable and must not be used."
+
+// decoyToolParams 是四件套占位工具的参数 schema。V2 门禁（2026-10-15 消融实测）
+// 校验工具参数结构：空 properties:{} 会被 403 FreeTierError，必须带真实的
+// 必填参数形状。参数名对齐 OpenCode 客户端的真实定义。
+var decoyToolParams = map[string]map[string]any{
+	"bash": {
+		"type": "object",
+		"properties": map[string]any{
+			"command": map[string]any{"type": "string", "description": "The shell command to execute"},
+		},
+		"required": []string{"command"},
+	},
+	"glob": {
+		"type": "object",
+		"properties": map[string]any{
+			"pattern": map[string]any{"type": "string", "description": "The glob pattern to match files against"},
+		},
+		"required": []string{"pattern"},
+	},
+	"grep": {
+		"type": "object",
+		"properties": map[string]any{
+			"pattern": map[string]any{"type": "string", "description": "The regular expression pattern to search for"},
+		},
+		"required": []string{"pattern"},
+	},
+	"read": {
+		"type": "object",
+		"properties": map[string]any{
+			"file_path": map[string]any{"type": "string", "description": "The path to the file to read"},
+		},
+		"required": []string{"file_path"},
+	},
+}
 
 type bodyShape int
 
@@ -71,9 +106,12 @@ func (s bodyShape) toolName(body []byte, i int) string {
 	return strings.TrimSpace(gjson.GetBytes(body, fmt.Sprintf("tools.%d.name", i)).String())
 }
 
-// decoyTool 按形状构造一个占位工具声明。
+// decoyTool 按形状构造一个占位工具声明（参数 schema 必须真实，见 decoyToolParams）。
 func (s bodyShape) decoyTool(name string) map[string]any {
-	params := map[string]any{"type": "object", "properties": map[string]any{}}
+	params := decoyToolParams[name]
+	if params == nil {
+		params = map[string]any{"type": "object", "properties": map[string]any{}}
+	}
 	switch s {
 	case shapeChat:
 		return map[string]any{
